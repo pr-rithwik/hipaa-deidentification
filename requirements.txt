@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+gradio
+pdfplumber
+pymupdf
+pytesseract
+pdf2image
+presidio-analyzer
+presidio-anonymizer
+spacy
+faker
+anthropic
+python-multipart
+python-dotenv
+
+# spacy model needs to be downloaded separately in Dockerfile
+# python -m spacy download en_core_web_sm
