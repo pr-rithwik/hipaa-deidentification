@@ -1,12 +1,7 @@
-fastapi
-uvicorn
 gradio
-pdfplumber
 pymupdf
 pytesseract
-pdf2image
 presidio-analyzer
-presidio-anonymizer
 spacy
 faker
 anthropic
