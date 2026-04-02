@@ -27,8 +27,8 @@ pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 
 # tesseract needs to be installed at the system level
-# ubuntu/wsl: sudo apt install tesseract-ocr tesseract-ocr-eng poppler-utils
-# mac: brew install tesseract poppler
+# ubuntu/wsl: sudo apt install tesseract-ocr tesseract-ocr-eng
+# mac: brew install tesseract
 
 cp .env.example .env
 # add your Anthropic API key
@@ -42,9 +42,9 @@ python main.py
 
 ### 1. OCR and text extraction
 
-Per-page hybrid extraction — not a single global strategy.
+Per-page hybrid extraction using pymupdf throughout — single library for both reading and writing, unified coordinate system.
 
-For each page, `pdfplumber` reads the text layer directly (fast, error-free, preserves table structure). If the page also has embedded images (stamps, handwritten notes), `pytesseract` runs separately on just those image regions. If the entire page has no text layer (fully scanned document), the whole page is converted to an image and OCR'd.
+For each page, `pymupdf` reads the text layer directly via `page.get_text()` (fast, error-free, preserves table structure). If the page has embedded images (stamps, handwritten notes), `pytesseract` runs separately on just those image regions, clipped and rasterized via pymupdf's `get_pixmap()`. If the entire page has no text layer (fully scanned document), the whole page is rasterized and OCR'd.
 
 This avoids running OCR on content that is already clean text — tesseract introduces character recognition errors on text-layer PDFs and breaks table alignment. The sample files provided are fully text-layer PDFs so tesseract is not invoked on them at all.
 
@@ -95,6 +95,10 @@ A full audit trail is returned alongside the redacted PDF. The report shows ever
 
 ## Design decisions
 
+**Why pymupdf for both extraction and redaction**
+
+The original implementation used pdfplumber for text extraction and pymupdf for redaction. These two libraries use different coordinate systems — pdfplumber has its origin at the top-left with y increasing downward, pymupdf has its origin at the bottom-left with y increasing upward. This mismatch required coordinate translation and was the source of several positional bugs. Consolidating on pymupdf eliminates this entirely — text is extracted and redacted in the same coordinate space.
+
 **Why Presidio + Claude instead of a single model**
 
 Presidio is deterministic, fast, and free per call — reliable for standard patterns like phone numbers, emails, and dates. Claude understands context and catches what Presidio misses. Running Presidio first and Claude as a top-up pass keeps latency and cost reasonable.
@@ -124,7 +128,7 @@ hipaa-deidentification/
 ├── config.py              # env vars, allowlists, constants
 ├── main.py                # entry point
 ├── ocr/
-│   ├── extractor.py       # per-page hybrid extraction
+│   ├── extractor.py       # per-page hybrid extraction (pymupdf + pytesseract)
 │   └── utils.py           # text cleaning helpers
 ├── detection/
 │   ├── presidio_engine.py # presidio + custom recognizers (phone, address, age)
@@ -149,7 +153,7 @@ hipaa-deidentification/
 ## Known limitations
 
 - Lab names and address components rendered in decorative or multi-object fonts may not be redacted — pymupdf's text search cannot match strings split across separate PDF text objects. Production systems would use font-aware text extraction.
-- Footer content rendered as graphic elements (lab address, timing in image-based footers) is not extracted by pdfplumber and therefore not detected or redacted. This applies to facility information, not patient PHI.
+- Footer content rendered as graphic elements (lab address, timing in image-based footers) is not extracted and therefore not detected or redacted. This applies to facility information, not patient PHI.
 - Bare 8-digit landline numbers without a context keyword are not detected — false positive risk against 8-digit clinical values is too high without surrounding context.
 - Handwriting recognition accuracy is low with Tesseract.
 - Date shifting preserves relative temporal relationships but does not guarantee full de-identification for very specific date combinations — an edge case for research use.

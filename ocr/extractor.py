@@ -8,7 +8,6 @@ from ocr.utils import clean_text, is_likely_scanned
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """
     Per-page hybrid extraction using pymupdf only.
-    Replaces the pdfplumber + pymupdf split — single library, unified coordinate system.
 
     Strategy per page:
     - get text layer via get_text() (fast, clean)
@@ -39,7 +38,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def _ocr_page_images(page: fitz.Page, images: list) -> str:
     """
     Run tesseract on embedded image regions within the page.
-    Uses pymupdf to clip and rasterize — no pdfplumber needed.
+    Uses pymupdf to clip and rasterize
     """
     ocr_results = []
 
