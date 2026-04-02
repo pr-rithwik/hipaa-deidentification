@@ -1,32 +1,34 @@
-import pdfplumber
+import fitz  # pymupdf
 import pytesseract
-from pdf2image import convert_from_bytes
-import io
+from PIL import Image
 
 from ocr.utils import clean_text, is_likely_scanned
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """
-    Per-page hybrid extraction.
-    - text layer via pdfplumber (clean, fast, preserves structure)
-    - embedded images via tesseract (stamps, handwritten bits)
-    Tried doing full OCR on everything first but it was mangling the table values
-    so switched to this approach.
+    Per-page hybrid extraction using pymupdf only.
+    Replaces the pdfplumber + pymupdf split — single library, unified coordinate system.
+
+    Strategy per page:
+    - get text layer via get_text() (fast, clean)
+    - if page has images → OCR just those image regions
+    - if text layer is empty → OCR full page
     """
     all_text = []
 
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page_num, page in enumerate(pdf.pages):
-            page_text = page.extract_text() or ""
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+        for page in doc:
+            page_text = page.get_text() or ""
             image_text = ""
 
-            if page.images:
-                image_text = _ocr_page_images(page)
+            images = page.get_images()
 
-            is_scanned = is_likely_scanned(page_text)
-            if is_scanned and not page.images:
-                image_text = _ocr_full_page(file_bytes, page_num)
+            if images:
+                image_text = _ocr_page_images(page, images)
+
+            if is_likely_scanned(page_text) and not images:
+                image_text = _ocr_full_page(page)
 
             combined = page_text + "\n" + image_text
             all_text.append(clean_text(combined))
@@ -34,41 +36,44 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     return "\n\n".join(all_text)
 
 
-def _ocr_page_images(page) -> str:
+def _ocr_page_images(page: fitz.Page, images: list) -> str:
     """
-    Run tesseract on embedded images within a page.
-    Logos and QR codes usually return garbage but that's fine,
-    they don't contain PHI anyway.
+    Run tesseract on embedded image regions within the page.
+    Uses pymupdf to clip and rasterize — no pdfplumber needed.
     """
     ocr_results = []
 
-    for img_obj in page.images:
+    for img in images:
         try:
-            # crop the image region from the page
-            bbox = (img_obj["x0"], img_obj["top"], img_obj["x1"], img_obj["bottom"])
-            cropped = page.within_bbox(bbox).to_image(resolution=150)
-            pil_img = cropped.original
+            bbox = page.get_image_bbox(img[7])
+
+            # clip the page to the image region and render to pixmap
+            clip = fitz.Rect(bbox)
+            mat = fitz.Matrix(150 / 72, 150 / 72)  # 150 DPI
+            pix = page.get_pixmap(matrix=mat, clip=clip)
+
+            # convert pixmap to PIL image for tesseract
+            pil_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
             text = pytesseract.image_to_string(pil_img, lang="eng")
             if text.strip():
                 ocr_results.append(text.strip())
+
         except Exception:
-            # if a specific image fails just skip it
             continue
 
     return "\n".join(ocr_results)
 
 
-def _ocr_full_page(file_bytes: bytes, page_num: int) -> str:
+def _ocr_full_page(page: fitz.Page) -> str:
     """
-    Convert entire page to image and OCR it.
-    Only called when the text layer is basically empty (scanned page).
+    Rasterize the full page and OCR it.
+    Only called when text layer is empty (fully scanned page).
     """
     try:
-        images = convert_from_bytes(file_bytes, first_page=page_num + 1, last_page=page_num + 1)
-        if not images:
-            return ""
-        text = pytesseract.image_to_string(images[0], lang="eng")
-        return text.strip()
+        mat = fitz.Matrix(150 / 72, 150 / 72)  # 150 DPI
+        pix = page.get_pixmap(matrix=mat)
+        pil_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        return pytesseract.image_to_string(pil_img, lang="eng").strip()
     except Exception:
         return ""
