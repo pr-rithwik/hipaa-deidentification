@@ -5,8 +5,6 @@ from config import MIN_TEXT_LENGTH_PER_PAGE
 def clean_text(text: str) -> str:
     """
     Basic cleanup after extraction.
-    pdfplumber sometimes leaves weird whitespace artifacts
-    especially around table borders.
     """
     if not text:
         return ""
